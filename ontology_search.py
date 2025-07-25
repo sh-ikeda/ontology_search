@@ -9,6 +9,7 @@ import argparse
 import re
 import time
 from owlready2 import get_ontology
+from owlready2 import DataProperty
 
 
 def generate_word_combinations(text):
@@ -40,36 +41,29 @@ def add_lowercase_synonyms(ontology):
     print("Adding lowercase synonyms for case-insensitive search...", file=sys.stderr)
     start_time = time.time()
 
+    with ontology:
+        class hasBroadSynonym(DataProperty):
+            pass
+
     for cls in ontology.classes():
         existing_synonyms = set()
-        
+
         # Collect existing synonyms (case-insensitive)
         if hasattr(cls, 'hasExactSynonym'):
-            synonyms = cls.hasExactSynonym if isinstance(cls.hasExactSynonym, list) else [cls.hasExactSynonym]
-            existing_synonyms.update(str(syn).lower() for syn in synonyms)
-        
-        # Add lowercase label if not already a synonym
-        if hasattr(cls, 'label') and cls.label:
-            label = cls.label[0] if isinstance(cls.label, list) else str(cls.label)
-            label_lower = label.lower()
-            if label_lower not in existing_synonyms:
-                if not hasattr(cls, 'hasBroadSynonym'):
-                    cls.hasBroadSynonym = []
-                elif not isinstance(cls.hasBroadSynonym, list):
-                    cls.hasBroadSynonym = [cls.hasBroadSynonym]
-                cls.hasBroadSynonym.append(label_lower)
-        
-        # Add lowercase synonyms if not already existing
-        if hasattr(cls, 'hasExactSynonym'):
-            synonyms = cls.hasExactSynonym if isinstance(cls.hasExactSynonym, list) else [cls.hasExactSynonym]
+            synonyms = cls.hasExactSynonym
+            existing_synonyms.update(synonyms)
+            # Add lowercase synonyms if not already existing
             for syn in synonyms:
                 syn_lower = str(syn).lower()
                 if syn_lower not in existing_synonyms:
-                    if not hasattr(cls, 'hasBroadSynonym'):
-                        cls.hasBroadSynonym = []
-                    elif not isinstance(cls.hasBroadSynonym, list):
-                        cls.hasBroadSynonym = [cls.hasBroadSynonym]
                     cls.hasBroadSynonym.append(syn_lower)
+        
+        # Add lowercase label if not already a synonym
+        label = cls.label[0]
+        label_lower = label.lower()
+        if label_lower not in existing_synonyms:
+            cls.hasBroadSynonym.append(label_lower)
+        
     
     add_time = time.time() - start_time
     print(f"Lowercase synonyms added in {add_time:.2f} seconds", file=sys.stderr)
