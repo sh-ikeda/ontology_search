@@ -32,46 +32,105 @@ def generate_word_combinations(text):
     return combinations
 
 
+def add_lowercase_synonyms(ontology):
+    """
+    Add lowercase versions of labels and synonyms as hasBroadSynonym
+    Only add if the lowercase version doesn't already exist as a synonym
+    """
+    print("Adding lowercase synonyms for case-insensitive search...", file=sys.stderr)
+    start_time = time.time()
+
+    for cls in ontology.classes():
+        existing_synonyms = set()
+        
+        # Collect existing synonyms (case-insensitive)
+        if hasattr(cls, 'hasExactSynonym'):
+            synonyms = cls.hasExactSynonym if isinstance(cls.hasExactSynonym, list) else [cls.hasExactSynonym]
+            existing_synonyms.update(str(syn).lower() for syn in synonyms)
+        
+        # Add lowercase label if not already a synonym
+        if hasattr(cls, 'label') and cls.label:
+            label = cls.label[0] if isinstance(cls.label, list) else str(cls.label)
+            label_lower = label.lower()
+            if label_lower not in existing_synonyms:
+                if not hasattr(cls, 'hasBroadSynonym'):
+                    cls.hasBroadSynonym = []
+                elif not isinstance(cls.hasBroadSynonym, list):
+                    cls.hasBroadSynonym = [cls.hasBroadSynonym]
+                cls.hasBroadSynonym.append(label_lower)
+        
+        # Add lowercase synonyms if not already existing
+        if hasattr(cls, 'hasExactSynonym'):
+            synonyms = cls.hasExactSynonym if isinstance(cls.hasExactSynonym, list) else [cls.hasExactSynonym]
+            for syn in synonyms:
+                syn_lower = str(syn).lower()
+                if syn_lower not in existing_synonyms:
+                    if not hasattr(cls, 'hasBroadSynonym'):
+                        cls.hasBroadSynonym = []
+                    elif not isinstance(cls.hasBroadSynonym, list):
+                        cls.hasBroadSynonym = [cls.hasBroadSynonym]
+                    cls.hasBroadSynonym.append(syn_lower)
+    
+    add_time = time.time() - start_time
+    print(f"Lowercase synonyms added in {add_time:.2f} seconds", file=sys.stderr)
+
+
 def search_ontology_term(ontology, query, additional_conditions=None):
     """
     Search ontology terms that match the specified query
-    Search both labels and synonyms, ignoring case
+    Search labels, exact synonyms, and broad synonyms (for case-insensitive matching)
     """
     if additional_conditions is None:
         additional_conditions = {}
     
     all_results = []
+    query_lower = query.lower()
     
-    # First, search for exact match (both label and synonym)
+    # First, search for exact match (case-sensitive)
     # Search by label
-    search_kwargs = {"label": query, "_case_sensitive": False}
+    search_kwargs = {"label": query}
     search_kwargs.update(additional_conditions)
     label_results = ontology.search(**search_kwargs)
     all_results.extend([(term, "label", query, None) for term in label_results])
     
-    # Search by synonym
-    search_kwargs = {"hasExactSynonym": query, "_case_sensitive": False}
+    # Search by exact synonym
+    search_kwargs = {"hasExactSynonym": query}
     search_kwargs.update(additional_conditions)
     synonym_results = ontology.search(**search_kwargs)
     
-    # Filter out synonyms that are just lowercase versions of labels
-    filtered_synonym_results = []
+    # Find actual matching synonyms
     for term in synonym_results:
-        term_label = get_term_label(term)
-        # Find the actual matching synonym
-        matching_synonym = None
         if hasattr(term, 'hasExactSynonym'):
             synonyms = term.hasExactSynonym if isinstance(term.hasExactSynonym, list) else [term.hasExactSynonym]
             for syn in synonyms:
-                if str(syn).lower() == query.lower():
-                    matching_synonym = str(syn)
+                if str(syn) == query:
+                    all_results.append((term, "hasExactSynonym", query, str(syn)))
                     break
-        
-        # Skip if the synonym is just a case variant of the label
-        if matching_synonym and matching_synonym.lower() != term_label.lower():
-            filtered_synonym_results.append((term, matching_synonym))
     
-    all_results.extend([(term, "hasExactSynonym", query, syn) for term, syn in filtered_synonym_results])
+    # Search by broad synonym (case-insensitive)
+    search_kwargs = {"hasBroadSynonym": query_lower}
+    search_kwargs.update(additional_conditions)
+    broad_synonym_results = ontology.search(**search_kwargs)
+    
+    # Find original matching terms for broad synonyms
+    for term in broad_synonym_results:
+        term_label = get_term_label(term)
+        
+        # Check if it matches the label (case-insensitive)
+        if term_label.lower() == query_lower:
+            # Skip if we already have exact label match
+            if not any(result[0] == term and result[1] == "label" for result in all_results):
+                all_results.append((term, "label", query, None))
+        
+        # Check if it matches an exact synonym (case-insensitive)
+        elif hasattr(term, 'hasExactSynonym'):
+            synonyms = term.hasExactSynonym if isinstance(term.hasExactSynonym, list) else [term.hasExactSynonym]
+            for syn in synonyms:
+                if str(syn).lower() == query_lower:
+                    # Skip if synonym is just lowercase version of label
+                    if str(syn).lower() != term_label.lower():
+                        all_results.append((term, "hasExactSynonym", query, str(syn)))
+                    break
     
     # Return if exact match found
     if all_results:
@@ -93,35 +152,50 @@ def search_ontology_term(ontology, query, additional_conditions=None):
         current_results = []
         
         for combination in combinations_by_length[word_count]:
-            # Search by label
-            search_kwargs = {"label": combination, "_case_sensitive": False}
+            combination_lower = combination.lower()
+            
+            # Search by label (case-sensitive)
+            search_kwargs = {"label": combination}
             search_kwargs.update(additional_conditions)
             label_results = ontology.search(**search_kwargs)
             current_results.extend([(term, "label", combination, None) for term in label_results])
             
-            # Search by synonym
-            search_kwargs = {"hasExactSynonym": combination, "_case_sensitive": False}
+            # Search by exact synonym (case-sensitive)
+            search_kwargs = {"hasExactSynonym": combination}
             search_kwargs.update(additional_conditions)
             synonym_results = ontology.search(**search_kwargs)
             
-            # Filter out synonyms that are just lowercase versions of labels
-            filtered_synonym_results = []
             for term in synonym_results:
-                term_label = get_term_label(term)
-                # Find the actual matching synonym
-                matching_synonym = None
                 if hasattr(term, 'hasExactSynonym'):
                     synonyms = term.hasExactSynonym if isinstance(term.hasExactSynonym, list) else [term.hasExactSynonym]
                     for syn in synonyms:
-                        if str(syn).lower() == combination.lower():
-                            matching_synonym = str(syn)
+                        if str(syn) == combination:
+                            current_results.append((term, "hasExactSynonym", combination, str(syn)))
                             break
-                
-                # Skip if the synonym is just a case variant of the label
-                if matching_synonym and matching_synonym.lower() != term_label.lower():
-                    filtered_synonym_results.append((term, matching_synonym))
             
-            current_results.extend([(term, "hasExactSynonym", combination, syn) for term, syn in filtered_synonym_results])
+            # Search by broad synonym (case-insensitive)
+            search_kwargs = {"hasBroadSynonym": combination_lower}
+            search_kwargs.update(additional_conditions)
+            broad_synonym_results = ontology.search(**search_kwargs)
+            
+            for term in broad_synonym_results:
+                term_label = get_term_label(term)
+                
+                # Check if it matches the label (case-insensitive)
+                if term_label.lower() == combination_lower:
+                    # Skip if we already have exact label match
+                    if not any(result[0] == term and result[1] == "label" and result[2] == combination for result in current_results):
+                        current_results.append((term, "label", combination, None))
+                
+                # Check if it matches an exact synonym (case-insensitive)
+                elif hasattr(term, 'hasExactSynonym'):
+                    synonyms = term.hasExactSynonym if isinstance(term.hasExactSynonym, list) else [term.hasExactSynonym]
+                    for syn in synonyms:
+                        if str(syn).lower() == combination_lower:
+                            # Skip if synonym is just lowercase version of label
+                            if str(syn).lower() != term_label.lower():
+                                current_results.append((term, "hasExactSynonym", combination, str(syn)))
+                            break
         
         # If matches found for this word count, don't search shorter combinations
         if current_results:
@@ -183,6 +257,9 @@ def main():
         ontology = get_ontology(f"file://{args.owl_file}").load()
         load_time = time.time() - start_time
         print(f"Ontology loaded in {load_time:.2f} seconds", file=sys.stderr)
+        
+        # Add lowercase synonyms for case-insensitive search
+        add_lowercase_synonyms(ontology)
         
         # Output header (TSV format)
         print("Query\tMatchedPart\tTermID\tMatchType\tTermLabel\tMatchedSynonym")
