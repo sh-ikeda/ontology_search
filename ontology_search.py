@@ -33,42 +33,6 @@ def generate_word_combinations(text):
     return combinations
 
 
-def add_lowercase_synonyms(ontology):
-    """
-    Add lowercase versions of labels and synonyms as hasBroadSynonym
-    Only add if the lowercase version doesn't already exist as a synonym
-    """
-    print("Adding lowercase synonyms for case-insensitive search...", file=sys.stderr)
-    start_time = time.time()
-
-    with ontology:
-        class hasBroadSynonym(DataProperty):
-            pass
-
-    for cls in ontology.classes():
-        existing_synonyms = set()
-
-        # Collect existing synonyms (case-insensitive)
-        if hasattr(cls, 'hasExactSynonym'):
-            synonyms = cls.hasExactSynonym
-            existing_synonyms.update(synonyms)
-            # Add lowercase synonyms if not already existing
-            for syn in synonyms:
-                syn_lower = str(syn).lower()
-                if syn_lower not in existing_synonyms:
-                    cls.hasBroadSynonym.append(syn_lower)
-        
-        # Add lowercase label if not already a synonym
-        label = cls.label[0]
-        label_lower = label.lower()
-        if label_lower not in existing_synonyms:
-            cls.hasBroadSynonym.append(label_lower)
-        
-    
-    add_time = time.time() - start_time
-    print(f"Lowercase synonyms added in {add_time:.2f} seconds", file=sys.stderr)
-
-
 def search_ontology_term(ontology, query, additional_conditions=None):
     """
     Search ontology terms that match the specified query
@@ -251,9 +215,6 @@ def main():
         ontology = get_ontology(f"file://{args.owl_file}").load()
         load_time = time.time() - start_time
         print(f"Ontology loaded in {load_time:.2f} seconds", file=sys.stderr)
-        
-        # Add lowercase synonyms for case-insensitive search
-        add_lowercase_synonyms(ontology)
         
         # Output header (TSV format)
         print("Query\tMatchedPart\tTermID\tMatchType\tTermLabel\tMatchedSynonym")
