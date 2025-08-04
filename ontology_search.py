@@ -8,8 +8,8 @@ import sys
 import argparse
 import re
 import time
+import nltk
 from owlready2 import get_ontology
-from owlready2 import DataProperty
 
 
 def generate_word_combinations(text):
@@ -33,6 +33,47 @@ def generate_word_combinations(text):
     return combinations
 
 
+def get_ngrams(text, n):
+    words = nltk.word_tokenize(text)
+    spans_gen = nltk.tokenize.TreebankWordTokenizer().span_tokenize(text)
+    spans = [span for span in spans_gen]
+    new_words = []
+    for word in words:
+        if word == "``":
+            new_words.append('"')
+        elif word == "''":
+            new_words.append('"')
+        else:
+            new_words.append(word)
+    words = new_words
+
+    if not words:
+        return [], []
+
+    n_grams = []
+    intervals = []
+    for i in range(0, len(spans) - n + 1):
+        text_char_begin = spans[i][0]
+        text_char_end = spans[i + n - 1][1]
+        n_gram = text[text_char_begin:text_char_end]
+        n_grams.append(n_gram)
+        intervals.append((text_char_begin, text_char_end))
+
+    return n_grams, intervals
+
+
+def delimit_words(words, delimiter):
+    delimited_words = []
+    for word in words:
+        split_words = word.split(delimiter)
+        delimited_words.extend(split_words)
+        
+        # replace delimiter to space
+        if len(split_words) != 1:
+            delimited_words.append(word.replace(delimiter, " "))
+    return
+
+
 def search_ontology_term(ontology, query, additional_conditions=None):
     """
     Search ontology terms that match the specified query
@@ -42,6 +83,7 @@ def search_ontology_term(ontology, query, additional_conditions=None):
         additional_conditions = {}
     
     all_results = []
+    all_result_terms = set()
     query_lower = query.lower()
     
     # First, search for exact match (case-sensitive)
@@ -50,64 +92,65 @@ def search_ontology_term(ontology, query, additional_conditions=None):
     search_kwargs.update(additional_conditions)
     label_results = ontology.search(**search_kwargs)
     all_results.extend([(term, "label", query, None) for term in label_results])
+    for term in label_results:
+        all_result_terms.add(term.id[0])
     
     # Search by exact synonym
     search_kwargs = {"hasExactSynonym": query}
     search_kwargs.update(additional_conditions)
     synonym_results = ontology.search(**search_kwargs)
-    
-    # Find actual matching synonyms
     for term in synonym_results:
-        if hasattr(term, 'hasExactSynonym'):
-            synonyms = term.hasExactSynonym if isinstance(term.hasExactSynonym, list) else [term.hasExactSynonym]
-            for syn in synonyms:
-                if str(syn) == query:
-                    all_results.append((term, "hasExactSynonym", query, str(syn)))
-                    break
+        if term.id[0] not in all_result_terms:
+            all_results.append((term, "hasExactSynonym", query, query))
+            all_result_terms.add(term.id[0])
     
     # Search by broad synonym (case-insensitive)
     search_kwargs = {"hasBroadSynonym": query_lower}
     search_kwargs.update(additional_conditions)
     broad_synonym_results = ontology.search(**search_kwargs)
-    
-    # Find original matching terms for broad synonyms
     for term in broad_synonym_results:
-        term_label = get_term_label(term)
-        
-        # Check if it matches the label (case-insensitive)
-        if term_label.lower() == query_lower:
-            # Skip if we already have exact label match
-            if not any(result[0] == term and result[1] == "label" for result in all_results):
-                all_results.append((term, "label", query, None))
-        
-        # Check if it matches an exact synonym (case-insensitive)
-        elif hasattr(term, 'hasExactSynonym'):
-            synonyms = term.hasExactSynonym if isinstance(term.hasExactSynonym, list) else [term.hasExactSynonym]
-            for syn in synonyms:
-                if str(syn).lower() == query_lower:
-                    # Skip if synonym is just lowercase version of label
-                    if str(syn).lower() != term_label.lower():
-                        all_results.append((term, "hasExactSynonym", query, str(syn)))
-                    break
+        if term.id[0] not in all_result_terms:
+            all_results.append((term, "hasBroadSynonym", query, query_lower))
+            all_result_terms.add(term.id[0])
     
     # Return if exact match found
     if all_results:
         return all_results
     
     # If no exact match, search with word decomposition (longest match first)
-    word_combinations = generate_word_combinations(query)
+    word_combinations = []
+    word_combinations_set = set()
+    grams, intervals = get_ngrams(query, 1)
+    max_n = min(7, len(grams))
+    for n in reversed(range(1, max_n+1)):
+        grams, intervals = get_ngrams(query, n)
+        for gram in grams:
+            word_combinations.append((gram, n))
+            word_combinations_set.add(gram)
     
+    delimited_query = " ".join(re.split('[-_+/]', query))
+    grams, intervals = get_ngrams(delimited_query, 1)
+    max_n = min(7, len(grams))
+    for n in reversed(range(1, max_n+1)):
+        grams, intervals = get_ngrams(delimited_query, n)
+        for gram in grams:
+            if gram not in word_combinations_set:
+                word_combinations.append((gram, n))
+                word_combinations_set.add(gram)
+
     # Group by word count
+    ## e.g. {3: ["a b c"], 2: ["a b", "b c"], 1:["a", "b", "c"]}
     combinations_by_length = {}
     for combination in word_combinations:
-        word_count = len(combination.split())
+        word_count = combination[1]
         if word_count not in combinations_by_length:
             combinations_by_length[word_count] = []
-        combinations_by_length[word_count].append(combination)
+        combinations_by_length[word_count].append(combination[0])
     
     # Search from longest to shortest word count
     for word_count in sorted(combinations_by_length.keys(), reverse=True):
         current_results = []
+        current_result_terms = set()
         
         for combination in combinations_by_length[word_count]:
             combination_lower = combination.lower()
@@ -117,19 +160,17 @@ def search_ontology_term(ontology, query, additional_conditions=None):
             search_kwargs.update(additional_conditions)
             label_results = ontology.search(**search_kwargs)
             current_results.extend([(term, "label", combination, None) for term in label_results])
-            
+            for term in label_results:
+                current_result_terms.add(term.id[0])
+
             # Search by exact synonym (case-sensitive)
             search_kwargs = {"hasExactSynonym": combination}
             search_kwargs.update(additional_conditions)
             synonym_results = ontology.search(**search_kwargs)
-            
             for term in synonym_results:
-                if hasattr(term, 'hasExactSynonym'):
-                    synonyms = term.hasExactSynonym if isinstance(term.hasExactSynonym, list) else [term.hasExactSynonym]
-                    for syn in synonyms:
-                        if str(syn) == combination:
-                            current_results.append((term, "hasExactSynonym", combination, str(syn)))
-                            break
+                if term.id[0] not in current_result_terms:
+                    current_results.append((term, "hasExactSynonym", combination, combination))
+                    current_result_terms.add(term.id[0])
             
             # Search by broad synonym (case-insensitive)
             search_kwargs = {"hasBroadSynonym": combination_lower}
@@ -137,23 +178,9 @@ def search_ontology_term(ontology, query, additional_conditions=None):
             broad_synonym_results = ontology.search(**search_kwargs)
             
             for term in broad_synonym_results:
-                term_label = get_term_label(term)
-                
-                # Check if it matches the label (case-insensitive)
-                if term_label.lower() == combination_lower:
-                    # Skip if we already have exact label match
-                    if not any(result[0] == term and result[1] == "label" and result[2] == combination for result in current_results):
-                        current_results.append((term, "label", combination, None))
-                
-                # Check if it matches an exact synonym (case-insensitive)
-                elif hasattr(term, 'hasExactSynonym'):
-                    synonyms = term.hasExactSynonym if isinstance(term.hasExactSynonym, list) else [term.hasExactSynonym]
-                    for syn in synonyms:
-                        if str(syn).lower() == combination_lower:
-                            # Skip if synonym is just lowercase version of label
-                            if str(syn).lower() != term_label.lower():
-                                current_results.append((term, "hasExactSynonym", combination, str(syn)))
-                            break
+                if term.id[0] not in current_result_terms:
+                    current_results.append((term, "hasBroadSynonym", combination, combination))
+                    current_result_terms.add(term.id[0])
         
         # If matches found for this word count, don't search shorter combinations
         if current_results:
