@@ -93,25 +93,25 @@ def search_ontology_term(ontology, query, additional_conditions=None):
     label_results = ontology.search(**search_kwargs)
     all_results.extend([(term, "label", query, None) for term in label_results])
     for term in label_results:
-        all_result_terms.add(term.id[0])
+        all_result_terms.add(term._name)
     
     # Search by exact synonym
     search_kwargs = {"hasExactSynonym": query}
     search_kwargs.update(additional_conditions)
     synonym_results = ontology.search(**search_kwargs)
     for term in synonym_results:
-        if term.id[0] not in all_result_terms:
+        if term._name not in all_result_terms:
             all_results.append((term, "hasExactSynonym", query, query))
-            all_result_terms.add(term.id[0])
+            all_result_terms.add(term._name)
     
     # Search by lowercase synonym
     search_kwargs = {"hasLowercaseSynonym": query_lower}
     search_kwargs.update(additional_conditions)
     lowercase_synonym_results = ontology.search(**search_kwargs)
     for term in lowercase_synonym_results:
-        if term.id[0] not in all_result_terms:
+        if term._name not in all_result_terms:
             all_results.append((term, "hasLowercaseSynonym", query, query_lower))
-            all_result_terms.add(term.id[0])
+            all_result_terms.add(term._name)
     
     # Return if exact match found
     if all_results:
@@ -161,16 +161,16 @@ def search_ontology_term(ontology, query, additional_conditions=None):
             label_results = ontology.search(**search_kwargs)
             current_results.extend([(term, "label", combination, None) for term in label_results])
             for term in label_results:
-                current_result_terms.add(term.id[0])
+                current_result_terms.add(term._name)
 
             # Search by exact synonym (case-sensitive)
             search_kwargs = {"hasExactSynonym": combination}
             search_kwargs.update(additional_conditions)
             synonym_results = ontology.search(**search_kwargs)
             for term in synonym_results:
-                if term.id[0] not in current_result_terms:
+                if term._name not in current_result_terms:
                     current_results.append((term, "hasExactSynonym", combination, combination))
-                    current_result_terms.add(term.id[0])
+                    current_result_terms.add(term._name)
             
             # Search by lowercase synonym
             search_kwargs = {"hasLowercaseSynonym": combination_lower}
@@ -178,9 +178,9 @@ def search_ontology_term(ontology, query, additional_conditions=None):
             lowercase_synonym_results = ontology.search(**search_kwargs)
             
             for term in lowercase_synonym_results:
-                if term.id[0] not in current_result_terms:
+                if term._name not in current_result_terms:
                     current_results.append((term, "hasLowercaseSynonym", combination, combination))
-                    current_result_terms.add(term.id[0])
+                    current_result_terms.add(term._name)
         
         # If matches found for this word count, don't search shorter combinations
         if current_results:
